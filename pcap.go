@@ -100,6 +100,24 @@ func main() {
 					}
 				}
 
+				buf.WriteString(" [")
+				for _, c := range ip4.Payload {
+					if c == '\r' {
+						buf.WriteString("\\r")
+					} else if c == '\n' {
+						buf.WriteString("\\n")
+					} else if c == '\t' {
+						buf.WriteString("\\t")
+					} else if c == '\\' {
+						buf.WriteString("\\\\")
+					} else if c >= ' ' && c < 127 {
+						buf.WriteByte(c)
+					} else {
+						fmt.Fprintf(buf, "\\x%02X", c)
+					}
+				}
+				buf.WriteString("]")
+
 				nf := false
 				if tcp.FIN {
 					if nf {
