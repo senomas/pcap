@@ -16,6 +16,7 @@ import (
 func main() {
 	dev := os.Getenv("PCAP_DEV")
 	filter := os.Getenv("PCAP_FILTER")
+	raw := os.Getenv("PCAP_RAW")
 	if dev == "" {
 		dev = "eth0"
 	}
@@ -82,79 +83,23 @@ func main() {
 			ip4, _ := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
 			tcp, _ := packet.Layer(layers.LayerTypeTCP).(*layers.TCP)
 
-			// fmt.Printf("\n\n%v\n", packet)
-			if ip4 != nil && tcp != nil {
-				s1 := fmt.Sprintf("%v:%d-%v:%d", ip4.SrcIP, tcp.SrcPort, ip4.DstIP, tcp.DstPort)
+			if raw != "" {
+				tz = time.Now()
+				if tz.After(tnext) {
+					tnext = tz.Truncate(time.Hour).Add(time.Hour)
+					fn := fmt.Sprintf("%s-%s.log", output, tz.Format(tlogFormat))
+					flog.Close()
 
-				_, s1c := conns[s1]
-				if s1c {
-					fmt.Fprintf(buf, "%v %v SEND %d", packet.Metadata().Timestamp.Format("15:04:05.000000"), s1, packet.Metadata().Length)
-				} else {
-					s2 := fmt.Sprintf("%v:%d-%v:%d", ip4.DstIP, tcp.DstPort, ip4.SrcIP, tcp.SrcPort)
-					_, s2c := conns[s2]
-					if s2c {
-						fmt.Fprintf(buf, "%v %v RECV %d", packet.Metadata().Timestamp.Format("15:04:05.000000"), s2, packet.Metadata().Length)
-					} else {
-						conns[s1] = 1
-						fmt.Fprintf(buf, "%v %v SEND %d", packet.Metadata().Timestamp.Format("15:04:05.000000"), s1, packet.Metadata().Length)
+					flog, err = os.OpenFile(fn, flogFlag, 0644)
+					if err != nil {
+						panic(err)
 					}
+					flog.Chown(uid, gid)
 				}
-
-				buf.WriteString(" [")
-				for _, c := range ip4.Payload {
-					if c == '\r' {
-						buf.WriteString("\\r")
-					} else if c == '\n' {
-						buf.WriteString("\\n")
-					} else if c == '\t' {
-						buf.WriteString("\\t")
-					} else if c == '\\' {
-						buf.WriteString("\\\\")
-					} else if c >= ' ' && c < 127 {
-						buf.WriteByte(c)
-					} else {
-						fmt.Fprintf(buf, "\\x%02X", c)
-					}
-				}
-				buf.WriteString("]")
-
-				nf := false
-				if tcp.FIN {
-					if nf {
-						fmt.Fprint(buf, ",FIN")
-					} else {
-						nf = true
-						fmt.Fprint(buf, " FIN")
-					}
-				}
-				if tcp.SYN {
-					if nf {
-						fmt.Fprint(buf, ",SYN")
-					} else {
-						nf = true
-						fmt.Fprint(buf, " SYN")
-					}
-				}
-				if tcp.RST {
-					if nf {
-						fmt.Fprint(buf, ",RST")
-					} else {
-						nf = true
-						fmt.Fprint(buf, " RST")
-					}
-				}
-				if tcp.ACK {
-					if nf {
-						fmt.Fprint(buf, ",ACK")
-					} else {
-						nf = true
-						fmt.Fprint(buf, " ACK")
-					}
-				}
+				fmt.Fprintf(buf, "%v %v", packet.Metadata().Timestamp.Format("15:04:05.000000"), packet)
 				lpayload := len(tcp.Payload)
 				if lpayload > 0 {
-					nf = true
-					fmt.Fprintf(buf, " %d [", lpayload)
+					fmt.Fprintf(buf, "- PAYLOAD %d [", lpayload)
 					for _, c := range tcp.Payload {
 						if c == '\r' {
 							buf.WriteString("\\r")
@@ -170,24 +115,99 @@ func main() {
 							fmt.Fprintf(buf, "\\x%02X", c)
 						}
 					}
-					buf.WriteString("]")
+					buf.WriteString("]\n")
 				}
-				if nf {
-					tz = time.Now()
-					if tz.After(tnext) {
-						tnext = tz.Truncate(time.Hour).Add(time.Hour)
-						fn := fmt.Sprintf("%s-%s.log", output, tz.Format(tlogFormat))
-						flog.Close()
-
-						flog, err = os.OpenFile(fn, flogFlag, 0644)
-						if err != nil {
-							panic(err)
-						}
-						flog.Chown(uid, gid)
-					}
-					fmt.Fprintln(flog, buf.String())
-				}
+				fmt.Fprintln(flog, buf.String())
 				buf.Reset()
+			} else {
+				if ip4 != nil && tcp != nil {
+					s1 := fmt.Sprintf("%v:%d-%v:%d", ip4.SrcIP, tcp.SrcPort, ip4.DstIP, tcp.DstPort)
+
+					_, s1c := conns[s1]
+					if s1c {
+						fmt.Fprintf(buf, "%v %v SEND %d", packet.Metadata().Timestamp.Format("15:04:05.000000"), s1, packet.Metadata().Length)
+					} else {
+						s2 := fmt.Sprintf("%v:%d-%v:%d", ip4.DstIP, tcp.DstPort, ip4.SrcIP, tcp.SrcPort)
+						_, s2c := conns[s2]
+						if s2c {
+							fmt.Fprintf(buf, "%v %v RECV %d", packet.Metadata().Timestamp.Format("15:04:05.000000"), s2, packet.Metadata().Length)
+						} else {
+							conns[s1] = 1
+							fmt.Fprintf(buf, "%v %v SEND %d", packet.Metadata().Timestamp.Format("15:04:05.000000"), s1, packet.Metadata().Length)
+						}
+					}
+
+					nf := false
+					if tcp.FIN {
+						if nf {
+							fmt.Fprint(buf, ",FIN")
+						} else {
+							nf = true
+							fmt.Fprint(buf, " FIN")
+						}
+					}
+					if tcp.SYN {
+						if nf {
+							fmt.Fprint(buf, ",SYN")
+						} else {
+							nf = true
+							fmt.Fprint(buf, " SYN")
+						}
+					}
+					if tcp.RST {
+						if nf {
+							fmt.Fprint(buf, ",RST")
+						} else {
+							nf = true
+							fmt.Fprint(buf, " RST")
+						}
+					}
+					if tcp.ACK {
+						if nf {
+							fmt.Fprint(buf, ",ACK")
+						} else {
+							nf = true
+							fmt.Fprint(buf, " ACK")
+						}
+					}
+					lpayload := len(tcp.Payload)
+					if lpayload > 0 {
+						nf = true
+						fmt.Fprintf(buf, " %d [", lpayload)
+						for _, c := range tcp.Payload {
+							if c == '\r' {
+								buf.WriteString("\\r")
+							} else if c == '\n' {
+								buf.WriteString("\\n")
+							} else if c == '\t' {
+								buf.WriteString("\\t")
+							} else if c == '\\' {
+								buf.WriteString("\\\\")
+							} else if c >= ' ' && c < 127 {
+								buf.WriteByte(c)
+							} else {
+								fmt.Fprintf(buf, "\\x%02X", c)
+							}
+						}
+						buf.WriteString("]")
+					}
+					if nf {
+						tz = time.Now()
+						if tz.After(tnext) {
+							tnext = tz.Truncate(time.Hour).Add(time.Hour)
+							fn := fmt.Sprintf("%s-%s.log", output, tz.Format(tlogFormat))
+							flog.Close()
+
+							flog, err = os.OpenFile(fn, flogFlag, 0644)
+							if err != nil {
+								panic(err)
+							}
+							flog.Chown(uid, gid)
+						}
+						fmt.Fprintln(flog, buf.String())
+					}
+					buf.Reset()
+				}
 			}
 		}
 	}
